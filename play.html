@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        [v-cloak] {
+            display: none;
+        }
+    </style>
+    <link rel="stylesheet" href="play.css">
+</head>
+
+<body>
+    <div id="app">
+        <section class="play" v-cloak>
+            <div class="play-title">
+                <div class="title-left">广东省深圳市南山区啊烽播放器</div>
+                <div class="title-input">
+                    <input type="text" v-model="keywords" @keyup.13="searchwords" placeholder="歌曲、歌手、热门歌曲">
+                </div>
+                <div class="tips" v-show="tips.length != 0 && keywords != ''">
+                    <p class="tip" @click.stop="searchkeyworks(tip)" v-for="tip in tips">{{tip}}</p>
+                </div>
+            </div>
+            <div class="play-centent">
+                <div class="centent-left">
+                    <div class="play-list" v-for="item,index in songs">
+                        <div class="player"><img src="./imgs/play.png" @click.stop="playaudio(item.id)"></div>
+                        <div class="play-name">{{item.name}}</div>
+                        <div :class="['play-mv',{hidde:item.mvid==0}]" @click.stop="playvideo(item.mvid)"></div>
+                    </div>
+                </div>
+                <div class="centent-middle">
+                    <div class="top">
+                        <img src="./imgs/player_bar.png" alt="" :class="['player_bar',{playing:isplayAudio==true}]">
+                        <img src="./imgs/disc.png" alt="" :class="['disc',{autorotate:isplayAudio==true}]">
+                        <img :src="coverUrl==''?'./imgs/cover.jpg':coverUrl" class="cover">
+                    </div>
+                    <div class="botton">
+                        <p class="songName">{{songsIndex}}</p>
+                        <p class="author">{{songauthor}}</p>
+                        <div class="songtext">
+                            <div ref="offsetHeight" class="songtextbox" :style="{top:top+'px'}">
+                                <p v-for="item,i in songsbox.lyric" :class="{textcolor:i == j}" :key="i">{{item}}</p>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+                <div class="centent-right">
+                    <h4>热门留言</h4>
+                    <div class="people" v-for="item,index in hotcomments">
+                        <div class="heardpicture">
+                            <img :src="item.user.avatarUrl" alt="">
+                        </div>
+                        <div class="user">
+                            <div class="username">{{item.user.nickname}}</div>
+                            <div class="usercentent">{{item.content}}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="play-button">
+                <audio @canplay="getDuration" @timeupdate="updateTime" ref="audio" :src="musicUrl" @play="play"
+                    @pause="pause" controls autoplay loop></audio>
+                <div :class="['play-video',{hidde:isplayVedio==false}]">
+                    <div class="mask"></div>
+                    <video ref="video" :src="videoUrl" controls autoplay loop></video>
+                    <div class="off" @click.stop="offVideo">X</div>
+                </div>
+            </div>
+            <div :class="['londing',{hidde:!islonding}]">
+                <img src="./imgs/londing4.gif" alt="">
+            </div>
+            <div class="skin">皮肤
+                <ul>
+                    <li id="skyskin">蓝❀系</li>
+                    <li id="blackskin">暗黑系</li>
+                    <li id="sunskin">光明系</li>
+                </ul>
+            </div>
+        </section>
+    </div>
+</body>
+<script src="./node_modules/vue/dist/vue.js"></script>
+<script src="./node_modules/axios/dist/axios.js"></script>
+<script src="./js/common.js"></script>
+<script>
+
+
+    let app = new Vue({
+        el: "#app",
+        data: {
+            songs: [],//歌曲的数组
+            songtext: [],//歌词的数组
+            coverUrl: "",//专辑的相片地址
+            musicUrl: "",//音乐地址
+            videoUrl: "",//视频地址
+            avatarUrl: "",//热门留言头像地址
+            hotcomments: [],//热门留言的数组
+            keywords: '', //关键词的搜索
+            isplayAudio: false, //音频的播放开关
+            isplayVedio: false,//视频的播放开关
+            songsIndex: "",//歌曲名字
+            songauthor: "",//歌手名字
+            islonding: true,//缓存加载
+            songsbox: [],//歌词和时间的数组包对象
+            j: 0,//当前播放的歌词高亮
+            top: 20, //控制歌词的上移动
+            currentTime: 0, //当前播放的歌词时间
+            // 本地存储下拉框
+            musicTips: JSON.parse(sessionStorage.getItem("musicTips") || "[]")
+        },
+
+        watch: {
+            //监听sessionStorage的数据绑定一个方法 发生变化调用
+            musicTips: function (value) {
+                sessionStorage.setItem("musicTips", JSON.stringify(value))
+            },
+            //监听播放音乐的时间 发生变化时歌词和top同时发生变化
+            currentTime: function (value) {
+                //拿div的高度除以歌词的length得到每句歌词移动的距离
+                let height = this.$refs.offsetHeight.offsetHeight / this.songsbox.lyric.length
+                this.songsbox.time.forEach((e, i) => {
+                    //如果歌词对应下标的时间等于当前音乐播放器时间 这条歌词高亮
+                    //top值等于 当前歌词下标 * 36px + 100px 
+                    if (value === e) {
+                        this.top = -i * height + 20
+                        this.j = i + 1
+                    }
+                })
+                console.log(height);
+            }
+
+        },
+        computed: {
+            // 设置一个空数组，并查找关键词push进空的数组
+            tips: function () {
+                let arr = [];
+                this.musicTips.forEach(e => {
+                    if (e.value.indexOf(this.keywords) != -1) {
+                        arr.push(e.value)
+                    }
+                })
+                return arr
+            }
+        },
+        // 挂在dom上，生命周期的mounted
+        mounted() {
+            let oSkin = document.getElementById("app")
+            let aLi = document.getElementById("blackskin")
+            let oLi = document.getElementById("skyskin")
+            let sLi = document.getElementById("sunskin")
+            aLi.addEventListener("click", function () {
+                oSkin.style.backgroundImage = 'url(./imgs/bg2.png)';
+
+            })
+            oLi.addEventListener("click", function () {
+                oSkin.style.backgroundImage = "url(./imgs/bg3.png)";
+
+            })
+            sLi.addEventListener("click", function () {
+                oSkin.style.backgroundImage = "url(./imgs/bg1.png)";
+
+            })
+            Axios.get("/search", {
+                params: {
+                    keywords: "热门"
+                }
+            }).then((res) => {
+                this.songs = res.result.songs;
+                // console.log(this.songs);
+                this.isplayAudio = false;
+                let id = this.songs[0].id;
+                this.songsIndex = this.songs[0].name;
+                this.songauthor = this.songs[0].artists[0].name;
+                Axios.get("/song/url", {
+                    params: {
+                        id: id
+                    }
+                }).then((res) => {
+                    // console.log(res);
+                    this.musicUrl = res.data[0].url
+                })
+                Axios.get("/comment/hot?type=0", {
+                    params: { id: id }
+                }).then((res) => {
+                    // console.log(res);
+                    this.hotcomments = res.hotComments;
+                })
+                Axios.get("/mv/url", {
+                    params: {
+                        id: id
+                    }
+                }).then((res) => {
+                    // console.log(res);
+                    this.videoUrl = res.data.url
+                })
+                Axios.get("/song/detail", {
+                    params: {
+                        ids: id
+                    }
+                }).then((res) => {
+                    // console.log(res);
+                    this.coverUrl = res.songs[0].al.picUrl
+                })
+                Axios.get("/lyric", {
+                    params: { id: id }
+                }).then((res) => {
+                    this.songtext = (res.lrc.lyric).split(/\[.*\]/);
+                    let arr = (res.lrc.lyric).match(/\[(.+?)\]/g);//截取时间
+                    let obj = {
+                        lyric: [],
+                        time: []
+                    }
+                    arr.forEach((e, i) => {
+                        if (e[1] === '0') {
+                            obj.lyric.push(this.songtext[i]);
+                            obj.time.push(e.substring(1, 3) * 60 + Math.round(e.substring(4, e.length - 1)))
+                        }
+                    });
+                    this.songsbox = obj
+                })
+
+            })
+
+        },
+        methods: {
+
+
+            // 用getDuration得到时长
+            getDuration() {
+                //Audio duration 属性 获得当前音频的长度：
+                this.duration = this.$refs.audio.duration
+            },
+            updateTime(e) {
+                //获取audio当前播放时间
+                this.currentTime = Math.round(e.target.currentTime)
+            },
+            //关闭mv播放
+            offVideo: function () {
+                this.isplayVedio = false;
+                this.$refs.video.pause();
+                this.$refs.audio.pause();
+            },
+            play: function () {
+                this.isplayAudio = true;
+            },
+            pause: function () {
+                this.isplayAudio = false;
+            },
+            //下拉的搜索sessionStorage
+            searchkeyworks: function (value) {
+                Axios.get("/search", {
+                    params: {
+                        keywords: value
+                    }
+                }).then((res) => {
+                    this.songs = res.result.songs
+                })
+                this.keywords = ""
+            },
+            //关键词搜索
+            searchwords: function () {
+                if (!this.keywords) {
+                    return alert("好风凭借力，送我上青云")
+                }
+                if (this.musicTips.every(e => e.value !== this.keywords)) {
+                    this.musicTips.push({
+                        id: this.musicTips.length + 1,
+                        value: this.keywords
+                    })
+                }
+                ;
+                Axios.get("/search", {
+                    params: {
+                        keywords: this.keywords
+                    }
+                }).then((res) => {
+                    this.songs = res.result.songs
+                })
+                this.keywords = ""
+            },
+            //mv播放
+            playvideo: function (id) {
+                this.isplayAudio = false;
+                this.$refs.audio.pause();
+                this.isplayVedio = true;
+                Axios.get("/mv/url", {
+                    params: {
+                        id: id
+                    }
+                }).then((res) => {
+                    this.videoUrl = res.data.url
+                })
+
+            },
+            //音频播放
+            playaudio: function (id) {
+                this.isplayAudio = true;
+                Axios.get("/song/url", {
+                    params: {
+                        id: id
+                    }
+                }).then((res) => {
+                    this.musicUrl = res.data[0].url;
+                })
+                Axios.get("/comment/hot?type=0", {
+                    params: {
+                        id: id
+                    }
+                }).then((res) => {
+                    this.hotcomments = res.hotComments;
+                })
+                Axios.get("/song/detail", {
+                    params: {
+                        ids: id
+                    }
+                }).then((res) => {
+                    this.songsIndex = res.songs[0].name;
+                    this.coverUrl = res.songs[0].al.picUrl
+                    this.songauthor = res.songs[0].ar[0].name;
+                    // console.log(res);
+                })
+                Axios.get("/lyric", {
+                    params: { id: id }
+                }).then((res) => {
+                    // console.log(res)
+                    this.songtext = (res.lrc.lyric).split(/\[.*\]/);//截取歌词
+                    let arr = (res.lrc.lyric).match(/\[(.+?)\]/g);//截取时间
+                    let obj = {
+                        lyric: [],
+                        time: []
+                    }
+                    //通过遍历将歌词和时间传到obj
+                    arr.forEach((e, i) => {
+                        if (e[1] === '0') {
+                            //push歌词
+                            obj.lyric.push(this.songtext[i]);
+                            //push每一句歌词对应总共时间(秒)
+                            //substring()提取字符串中介于两个指定下标之间的字符。把分钟化成秒
+                            obj.time.push(e.substring(1, 3) * 60 + Math.round(e.substring(4, e.length - 1)))
+                        }
+                    });
+                    this.songsbox = obj
+                    console.log(obj);
+                    console.log(this.songsbox);
+
+                })
+            },
+
+        }
+
+
+    })
+</script>
+
+</html>
